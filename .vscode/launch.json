@@ -1,0 +1,24 @@
+{
+    // Usare IntelliSense per informazioni sui possibili attributi.
+    // Al passaggio del mouse vengono visualizzate le descrizioni degli attributi esistenti.
+    // Per ulteriori informazioni, visitare: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+          "type": "gdb",
+          "request": "attach",
+          "name": "Attach to gdb qemu",
+          "executable": "${workspaceRoot}/../linux-4.18.11/vmlinux",
+          "target": "tcp:localhost:1234",
+          "remote": true,
+          "cwd": "${workspaceRoot}/../linux-4.18.11", 
+          "gdbpath": "/usr/bin/gdb-multiarch",
+          "autorun": [
+            "set print pretty on"
+	    ,"lx-symbols"
+          ]
+	  // in /home/miki/.gdbinit aggiungere 
+	  // set auto-load safe-path /
+        }
+    ]
+}
