@@ -512,6 +512,11 @@ config PCI_ENDPOINT_TEST
 config MISC_RTSX
 	tristate
 	default MISC_RTSX_PCI || MISC_RTSX_USB
+	
+config MYTEST
+	tristate "Mytest driver"
+	---help---
+           mytest driver
 
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
