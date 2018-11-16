@@ -3,7 +3,9 @@
 #include <linux/fs.h>
 #include <linux/device.h>
 #include <linux/platform_device.h>
+#include <linux/uaccess.h>
 #include <linux/of.h>
+#include <asm/io.h>
 
 /* We'll try to allocate a device major number and store it here */
 static int major;
@@ -22,6 +24,54 @@ struct qemu_device {
 
 static LIST_HEAD(qemudev_list);
 static DEFINE_SPINLOCK(qemudev_list_lock);
+
+/* Utility functions to access the peripheral's registers */
+#define qemu_reg_write(base, value)	__raw_writel((value), base)
+#define qemu_reg_read(base)		__raw_readl(base)
+
+/*
+ * Reading from the device file triggers a read from the device's data register.
+ * This value is then formatted into a human-readable string and copied to
+ * userspace.
+ */
+static ssize_t qemudev_read(struct file *filp, char __user *buf,
+			    size_t count, loff_t *f_pos)
+{
+	struct qemu_device *qemudev = filp->private_data;
+	uint32_t val = qemu_reg_read(qemudev->regs);
+	char str[12];
+	ssize_t n;
+
+	/* For simplicity's sake */
+	if (*f_pos)
+		return 0;
+
+	n = snprintf(str, sizeof(str), "%u\n", val);
+	n = n - copy_to_user(buf, str, n);
+	*f_pos += n;
+
+	return n;
+}
+
+/*
+ * Writing to the device file triggers a write to the device's data register.
+ * We must first convert the human-readable string coming from userspace into
+ * its binary representation.
+ */
+static ssize_t qemudev_write(struct file *filp, const char __user *buf,
+			     size_t count, loff_t *f_pos)
+{
+	struct qemu_device *qemudev = filp->private_data;
+	uint32_t val;
+	int ret;
+
+	ret = kstrtouint_from_user(buf, count, 0, &val);
+	if (ret)
+		return ret;
+
+	qemu_reg_write(qemudev->regs, val);
+	return count;
+}
 
 /*
  * When opening a device file, we need to find the qemu_device associated with
@@ -65,6 +115,9 @@ static const struct file_operations qemudev_fops = {
 	.owner		= THIS_MODULE,
 	.open		= qemudev_open,
 	.release	= qemudev_release,
+	.read		= qemudev_read,
+	.write		= qemudev_write,
+	.llseek		= no_llseek,
 };
 
 static struct class *qemudev_class;
