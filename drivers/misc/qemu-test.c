@@ -8,6 +8,12 @@
 /* We'll try to allocate a device major number and store it here */
 static int major;
 
+/* A specific instance of our physical device */
+struct qemu_device {
+	struct platform_device	*pdev;      /* The platform device we belong to */
+	void __iomem		*regs;      /* Memory-mapped device registers   */
+};
+
 static const struct file_operations qemudev_fops = {
 	.owner		= THIS_MODULE,
 };
@@ -21,7 +27,26 @@ static struct class *qemudev_class;
  */
 static int qemudev_probe(struct platform_device *pdev)
 {
-	/* TODO: implement me! */
+	struct qemu_device *qemudev;
+	struct resource *regs;
+
+	/* Allocate our device's data structure using managed allocation */
+	qemudev = devm_kzalloc(&pdev->dev, sizeof(struct qemu_device), GFP_KERNEL);
+	if (!qemudev) {
+		dev_err(&pdev->dev, "out of memory\n");
+		return -ENOMEM;
+	}
+	qemudev->pdev = pdev;
+
+	/* Retrieve and remap the MMIO region associated to this device.
+	 * In modern kernels for ARM platforms, this is usually retrieved
+	 * from a device tree entry.
+	 */
+	regs = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	qemudev->regs = devm_ioremap_resource(&pdev->dev, regs);
+	if (IS_ERR(qemudev->regs))
+		return PTR_ERR(qemudev->regs);
+
 	dev_info(&pdev->dev, "successfully probed!\n");
 	return 0;
 }
