@@ -23,8 +23,48 @@ struct qemu_device {
 static LIST_HEAD(qemudev_list);
 static DEFINE_SPINLOCK(qemudev_list_lock);
 
+/*
+ * When opening a device file, we need to find the qemu_device associated with
+ * that file. This is usually done by looking at the minor in this case.
+ * A reference to the found qemu_device is then stored in the private_data
+ * field of the file structure.
+ */
+static int qemudev_open(struct inode *inode, struct file *filp)
+{
+	struct qemu_device *qemudev;
+	unsigned minor = iminor(inode);
+
+	/* Traverse the instanced devices to find the one matching the
+	 * minor of the requested inode */
+	spin_lock(&qemudev_list_lock);
+	list_for_each_entry(qemudev, &qemudev_list, list_entry) {
+		if (MINOR(qemudev->devt) == minor)
+			goto found;
+	}
+	qemudev = NULL;
+
+found:
+	spin_unlock(&qemudev_list_lock);
+	if (!qemudev)
+		return -ENODEV;
+
+	filp->private_data = qemudev;
+	return 0;
+}
+
+/*
+ * Nothing to do, just unbind the private_data field.
+ */
+static int qemudev_release(struct inode *inode, struct file *filp)
+{
+	filp->private_data = NULL;
+	return 0;
+}
+
 static const struct file_operations qemudev_fops = {
 	.owner		= THIS_MODULE,
+	.open		= qemudev_open,
+	.release	= qemudev_release,
 };
 
 static struct class *qemudev_class;
