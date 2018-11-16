@@ -3,6 +3,7 @@
 #include <linux/fs.h>
 #include <linux/device.h>
 #include <linux/platform_device.h>
+#include <linux/interrupt.h>
 #include <linux/uaccess.h>
 #include <linux/of.h>
 #include <asm/io.h>
@@ -20,6 +21,7 @@ struct qemu_device {
 	struct platform_device	*pdev;      /* The platform device we belong to */
 	void __iomem		*regs;      /* Memory-mapped device registers   */
 	dev_t			devt;       /* Our device instance identifier   */
+	int			irq;        /* Interrupt number                 */
 };
 
 static LIST_HEAD(qemudev_list);
@@ -28,6 +30,21 @@ static DEFINE_SPINLOCK(qemudev_list_lock);
 /* Utility functions to access the peripheral's registers */
 #define qemu_reg_write(base, value)	__raw_writel((value), base)
 #define qemu_reg_read(base)		__raw_readl(base)
+
+/*
+ * Serve interrupts coming from the device.
+ * When an interrupt happens, reset the counter value to 0.
+ */
+static irqreturn_t qemudev_irq_handler(int irq, void *dev_id)
+{
+	struct qemu_device *qemudev = dev_id;
+	struct device *dev = &qemudev->pdev->dev;
+
+	qemu_reg_write(qemudev->regs, 0);
+
+	dev_info(dev, "IRQ handled!\n");
+	return IRQ_HANDLED;
+}
 
 /*
  * Reading from the device file triggers a read from the device's data register.
@@ -151,6 +168,20 @@ static int qemudev_probe(struct platform_device *pdev)
 	qemudev->regs = devm_ioremap_resource(&pdev->dev, regs);
 	if (IS_ERR(qemudev->regs))
 		return PTR_ERR(qemudev->regs);
+
+	/* Retrieve interrupt number and register interrupt handler */
+	qemudev->irq = platform_get_irq(pdev, 0);
+	if (!qemudev->irq) {
+		dev_err(&pdev->dev, "could not get irq\n");
+		return -ENXIO;
+	}
+
+	ret = devm_request_irq(&pdev->dev, qemudev->irq, qemudev_irq_handler,
+			       IRQF_SHARED, pdev->name, qemudev);
+	if (ret) {
+		dev_err(&pdev->dev, "could not register IRQ handler\n");
+		return ret;
+	}
 
 	/* Create the associated device entry in /dev */
 	spin_lock(&qemudev_list_lock);
