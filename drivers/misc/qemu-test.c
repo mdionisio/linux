@@ -8,11 +8,20 @@
 /* We'll try to allocate a device major number and store it here */
 static int major;
 
+/* One minor for each instance of the device */
+#define N_QEMUDEV_MINORS	32 /* up to 256 */
+static DECLARE_BITMAP(minors, N_QEMUDEV_MINORS);
+
 /* A specific instance of our physical device */
 struct qemu_device {
+	struct list_head	list_entry; /* List handle for this element     */
 	struct platform_device	*pdev;      /* The platform device we belong to */
 	void __iomem		*regs;      /* Memory-mapped device registers   */
+	dev_t			devt;       /* Our device instance identifier   */
 };
+
+static LIST_HEAD(qemudev_list);
+static DEFINE_SPINLOCK(qemudev_list_lock);
 
 static const struct file_operations qemudev_fops = {
 	.owner		= THIS_MODULE,
@@ -29,6 +38,9 @@ static int qemudev_probe(struct platform_device *pdev)
 {
 	struct qemu_device *qemudev;
 	struct resource *regs;
+	struct device *dev;
+	unsigned long minor;
+	int ret;
 
 	/* Allocate our device's data structure using managed allocation */
 	qemudev = devm_kzalloc(&pdev->dev, sizeof(struct qemu_device), GFP_KERNEL);
@@ -47,8 +59,38 @@ static int qemudev_probe(struct platform_device *pdev)
 	if (IS_ERR(qemudev->regs))
 		return PTR_ERR(qemudev->regs);
 
-	dev_info(&pdev->dev, "successfully probed!\n");
-	return 0;
+	/* Create the associated device entry in /dev */
+	spin_lock(&qemudev_list_lock);
+	{
+		/* Find a free minor to use for this device.
+		 * Reusing minors is fine as long as udev is working.
+		 */
+		minor = find_first_zero_bit(minors, N_QEMUDEV_MINORS);
+
+		if (minor < N_QEMUDEV_MINORS) {
+			qemudev->devt = MKDEV(major, minor);
+			dev = device_create(qemudev_class, NULL, qemudev->devt,
+					    qemudev, "qemu-test-%ld", minor);
+			ret = PTR_ERR_OR_ZERO(dev);
+		} else {
+			dev_warn(&pdev->dev, "no minor available!\n");
+			ret = -ENODEV;
+		}
+
+		/* If everything went fine, mark the minor as used
+		 * and push our new device into the list. */
+		if (!ret) {
+			set_bit(minor, minors);
+			list_add(&qemudev->list_entry, &qemudev_list);
+
+			platform_set_drvdata(pdev, qemudev);
+
+			dev_info(&pdev->dev, "successfully probed!\n");
+		}
+	}
+	spin_unlock(&qemudev_list_lock);
+
+	return ret;
 }
 
 /*
@@ -57,7 +99,18 @@ static int qemudev_probe(struct platform_device *pdev)
  */
 static int qemudev_remove(struct platform_device *pdev)
 {
-	/* TODO: implement me! */
+	struct qemu_device *qemudev = platform_get_drvdata(pdev);
+
+	/* Remove this specific device from the list, and destroy
+	 * the /dev entry associated with its minor */
+	spin_lock(&qemudev_list_lock);
+	{
+		list_del(&qemudev->list_entry);
+		clear_bit(MINOR(qemudev->devt), minors);
+		device_destroy(qemudev_class, qemudev->devt);
+	}
+	spin_unlock(&qemudev_list_lock);
+
 	return 0;
 }
 
