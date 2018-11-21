@@ -47,6 +47,15 @@
 / {
 	model = "Freescale i.MX6 Quad SABRE Lite Board";
 	compatible = "fsl,imx6q-sabrelite", "fsl,imx6q";
+
+	soc {
+		qemudev: qemu-test@50000000 {
+			compatible = "linuxlab,qemu-test";
+			reg = <0x50000000 4>;
+			interrupts = <0 42 IRQ_TYPE_EDGE_RISING>;
+			status = "okay";
+		};
+	};
 };
 
 &sata {
